@@ -19,21 +19,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parse command-line arguments.
     let args = ServerArgs::parse();
-    let addr = format!("0.0.0.0:{}", args.port);
+    
+    codecrafters_redis::start_server(args.port).await?;
 
-    // Bind a TCP listener to the specified address.
-    let listener = TcpListener::bind(&addr).await?;
-    info!("Server listening on {}", addr);
-
-
-    // Accept incoming connections in a loop.
-    loop {
-        match listener.accept().await {
-            Ok((socket, peer_addr)) => {
-                info!("Accepted connection from {}", peer_addr);
-                codecrafters_redis::handle_connection(socket).await?;
-            }
-            Err(e) => error!("Failed to accept connection: {}", e),
-        }
-    }
+    Ok(())
 }
