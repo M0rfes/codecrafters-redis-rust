@@ -17,11 +17,11 @@ use crate::parser::RespCodec;
 
 pub struct Client {
     socket: SplitSink<Framed<TcpStream, RespCodec>, BytesMut>,
-    kv: &'static Lazy<DashMap<String, String>>,
+    kv:     DashMap<String, String>,
 }
 
 impl Client {
-    pub fn new(socket: SplitSink<Framed<TcpStream, RespCodec>, BytesMut>, kv: &'static Lazy<DashMap<String, String>>) -> Self {
+    pub fn new(socket: SplitSink<Framed<TcpStream, RespCodec>, BytesMut>, kv: DashMap<String, String>) -> Self {
         Self {
             socket,
             kv,

@@ -26,9 +26,9 @@ use once_cell::sync::Lazy;
 type DS = DashMap<Uuid,Client>;
 
 static CLIENTS: Lazy<DS> = Lazy::new(|| DashMap::new());
-static KV: Lazy<DashMap<String,String>> = Lazy::new(|| DashMap::new());
+static KV: Lazy<DashMap<Uuid,DashMap<String,String>>> = Lazy::new(|| DashMap::new());
 static ADDRESS_TO_UUID: Lazy<DashMap<String,Uuid>> = Lazy::new(|| DashMap::new());
-// static KV: Lazy<DashMap<Uuid,&'static HashMap<String,String>>> = Lazy::new(|| DashMap::new());
+
 
 
 pub async fn handle_connection(stream: TcpStream, command_tx: Sender<CommandResponse>)->Result<(),Box<dyn std::error::Error>> {
@@ -40,12 +40,20 @@ pub async fn handle_connection(stream: TcpStream, command_tx: Sender<CommandResp
         id
     });
 
+    let kv = KV.get(&client_id).map(|kv| {
+        kv.clone()
+    }).unwrap_or_else(|| {
+        let kv = DashMap::new();
+        KV.insert(client_id, kv.clone());
+        kv
+    });
+
 
     // Wrap the TCP stream with a RESP codec.
     let framed: Framed<TcpStream, parser::RespCodec> = Framed::new(stream, parser::RespCodec);
 
     let (writer_sink, reader_stream) = framed.split();
-    let client = Client::new(writer_sink, &KV);
+    let client = Client::new(writer_sink, kv);
 
     CLIENTS.insert(client_id, client);
 
