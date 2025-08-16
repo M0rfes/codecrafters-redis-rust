@@ -47,6 +47,14 @@ impl Reader {
                 debug!("Received ECHO command: {}", s);
                 self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::ECHO(s) }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
             }
+            Command::SET(key, value) => {
+                debug!("Received SET command: {} = {}", key, value);
+                self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::SET(key, value) }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
+            }
+            Command::GET(key) => {
+                debug!("Received GET command: {}", key);
+                self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::GET(key) }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
+            }
         }
         Ok(())
     }

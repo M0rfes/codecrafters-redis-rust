@@ -1,10 +1,13 @@
 use bytes::{Buf, BytesMut};
 use thiserror::Error;
+use tracing::info;
 use uuid::Uuid;
 
 pub enum Command {
     PING,
     ECHO(String),
+    SET(String, String),
+    GET(String),
 }
 
 #[derive(Debug, Error)]
@@ -39,8 +42,10 @@ impl<'a> CommandParser<'a> {
 
         let commands = self.parse()?;
         match commands[0].as_str() {
-            "PING" => Ok(Command::PING),
-            "ECHO" => Ok(Command::ECHO(commands[1].clone())),
+            "PING" | "ping" => Ok(Command::PING),
+            "ECHO" | "echo" => Ok(Command::ECHO(commands[1].clone())),
+            "SET" | "set" => Ok(Command::SET(commands[1].clone(), commands[2].clone())),
+            "GET" | "get" => Ok(Command::GET(commands[1].clone())),
             _ => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid command")),
         }
     }
@@ -127,6 +132,8 @@ impl<'a> CommandParser<'a> {
                 result.push(first_byte as char);
                 if second_byte == b'\r' {
                     self.cursor.set_position(self.cursor.position() - 1);
+                } else {
+                    result.push(second_byte as char);
                 }
             }
         }
@@ -138,6 +145,9 @@ impl<'a> CommandParser<'a> {
 pub enum Response {
     PONG,
     ECHO(String),
+    OK,
+    GET(String),
+    SET(String, String),
 }
 
 impl Response {
@@ -145,6 +155,8 @@ impl Response {
         match self {
             Response::PONG => BytesMut::from("+PONG\r\n"),
             Response::ECHO(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
+            Response::OK | Response::SET(_, _) => BytesMut::from("+OK\r\n"),
+            Response::GET(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
         }
     }
 }
