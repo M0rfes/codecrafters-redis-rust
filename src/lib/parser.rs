@@ -1,7 +1,6 @@
 use bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::command::Command;
 pub struct RespCodec;
 
 impl Decoder for RespCodec {
@@ -35,7 +34,7 @@ impl Encoder<BytesMut> for RespCodec {
 }
 
 impl RespCodec {
-   pub fn parse_resp(
+    pub fn parse_resp(
         &self,
         cursor: &mut std::io::Cursor<&[u8]>,
     ) -> Result<Option<usize>, std::io::Error> {
@@ -64,7 +63,7 @@ impl RespCodec {
         &self,
         cursor: &mut std::io::Cursor<&[u8]>,
     ) -> Result<Option<usize>, std::io::Error> {
-        let count = self.read_until_crlf(cursor)?;
+        let count = self.get_string(cursor)?;
         let count: i64 = count.parse().map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid array count")
         })?;
@@ -86,7 +85,7 @@ impl RespCodec {
         &self,
         cursor: &mut std::io::Cursor<&[u8]>,
     ) -> Result<Option<usize>, std::io::Error> {
-        let length = self.read_until_crlf(cursor)?;
+        let length = self.get_string(cursor)?;
         let length: i64 = length.parse().map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -130,9 +129,9 @@ impl RespCodec {
         Ok(Some(cursor.position() as usize))
     }
 
-    fn read_until_crlf(&self,cursor: &mut std::io::Cursor<&[u8]>) -> Result<String, std::io::Error> {
-        let mut result = String::new();
 
+    fn get_string(&self,cursor: &mut std::io::Cursor<&[u8]>) -> Result<String, std::io::Error> {
+        let mut result = String::new();
         while cursor.remaining() > 0 {
             let first_byte = cursor.get_u8();
             let second_byte = cursor.get_u8();
@@ -149,15 +148,23 @@ impl RespCodec {
                 }
             }
         }
-
-
         Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "Missing CRLF"))
-
     }
-}
 
-impl  RespCodec {
-    pub fn parse_command(&self,cursor: &mut std::io::Cursor<&[u8]>) -> Result<Command, std::io::Error> {
-        return Ok(Command::PING);
+    fn read_until_crlf(&self,cursor: &mut std::io::Cursor<&[u8]>) -> Result<(), std::io::Error> {
+        while cursor.remaining() > 0 {
+            let first_byte = cursor.get_u8();
+            let second_byte = cursor.get_u8();
+            if first_byte == b'\r' && second_byte == b'\n' {
+                return Ok(());
+            } else {
+                if second_byte == b'\r' {
+                    // pull the cursor back by 1 to make first_byte the \r
+                    // and check if the next byte is \n
+                    cursor.set_position(cursor.position() - 1);
+                }
+            }
+        }
+        Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "Missing CRLF"))
     }
 }

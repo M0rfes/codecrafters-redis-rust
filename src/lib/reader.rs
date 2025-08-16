@@ -43,6 +43,10 @@ impl Reader {
                 debug!("Received PING command");
                 self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::PONG }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
             }
+            Command::ECHO(s) => {
+                debug!("Received ECHO command: {}", s);
+                self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::ECHO(s) }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
+            }
         }
         Ok(())
     }
