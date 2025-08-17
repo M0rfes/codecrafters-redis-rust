@@ -1,4 +1,5 @@
 use bytes::{Buf, BytesMut};
+use chrono::TimeDelta;
 use thiserror::Error;
 use tracing::info;
 use uuid::Uuid;
@@ -6,8 +7,10 @@ use uuid::Uuid;
 pub enum Command {
     PING,
     ECHO(String),
-    SET(String, String),
+    SET(String, String,Option<u64>),
     GET(String),
+    DOCS,
+
 }
 
 #[derive(Debug, Error)]
@@ -20,6 +23,12 @@ pub enum ReaderError {
 
     #[error("Send error occurred")]
     SendError(String),
+
+    #[error("Invalid expiry")]
+    InvalidExpiry(String),
+
+    #[error("Invalid command")]
+    InvalidCommand(String),
 }
 
 impl TryFrom<BytesMut> for Command {
@@ -27,7 +36,7 @@ impl TryFrom<BytesMut> for Command {
 
     fn try_from(value: BytesMut) -> Result<Self, Self::Error> {
         let mut parser = CommandParser { cursor: std::io::Cursor::new(&value[..]) };
-        parser.parse_command().map_err(|err| ReaderError::ParseError(err))
+        parser.parse_command()
     }
 }
 
@@ -35,18 +44,27 @@ struct CommandParser<'a> {
     cursor: std::io::Cursor<&'a [u8]>,
 }
 impl<'a> CommandParser<'a> {
-        pub fn parse_command(&mut self) -> Result<Command, std::io::Error> {
+        pub fn parse_command(&mut self) -> Result<Command, ReaderError> {
         if self.cursor.remaining() == 0 {
-            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "Missing CRLF"));
+            return Err(ReaderError::ReadError);
         }
 
-        let commands = self.parse()?;
+        let commands = self.parse().map_err(|_| ReaderError::ReadError)?;
+        info!("Commands: {:?}", commands);
         match commands[0].as_str() {
             "PING" | "ping" => Ok(Command::PING),
             "ECHO" | "echo" => Ok(Command::ECHO(commands[1].clone())),
-            "SET" | "set" => Ok(Command::SET(commands[1].clone(), commands[2].clone())),
+            "SET" | "set" => {
+                if commands.len() == 5 && (commands[3] == "PX" || commands[3] == "px") {
+                    let expiry:u64 = commands[4].parse().map_err(|_| ReaderError::InvalidExpiry(commands[4].clone()))?;
+                    Ok(Command::SET(commands[1].clone(), commands[2].clone(), Some(expiry)))
+                } else {
+                    Ok(Command::SET(commands[1].clone(), commands[2].clone(), None))
+                }
+            },
             "GET" | "get" => Ok(Command::GET(commands[1].clone())),
-            _ => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid command")),
+            "DOCS" | "docs" => Ok(Command::DOCS),
+            _ => Err(ReaderError::InvalidCommand(commands[0].clone())),
         }
     }
 
@@ -147,7 +165,9 @@ pub enum Response {
     ECHO(String),
     OK,
     GET(String),
-    SET(String, String),
+    SET(String, String,Option<u64>),
+    ERROR(String),
+    NULL,
 }
 
 impl Response {
@@ -155,8 +175,10 @@ impl Response {
         match self {
             Response::PONG => BytesMut::from("+PONG\r\n"),
             Response::ECHO(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
-            Response::OK | Response::SET(_, _) => BytesMut::from("+OK\r\n"),
+            Response::OK | Response::SET(_, _,_) => BytesMut::from("+OK\r\n"),
             Response::GET(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
+            Response::ERROR(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
+            Response::NULL => BytesMut::from("$-1\r\n"),
         }
     }
 }

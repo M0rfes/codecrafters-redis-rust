@@ -1,18 +1,14 @@
-mod reader;
-mod data_store;
 pub mod command;
+mod data_store;
 pub mod parser;
+mod reader;
 
+use std::time::Duration;
 
-
-use std::collections::HashMap;
-use std::sync::Arc;
-
+use chrono::Utc;
 use futures::StreamExt;
-use tokio::net::unix::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{self, Sender};
-use tokio::sync::{Mutex, RwLock};
 use tokio_util::codec::Framed;
 use tracing::info;
 use uuid::Uuid;
@@ -23,37 +19,41 @@ use crate::data_store::{Client, DataStore};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 
-type DS = DashMap<Uuid,Client>;
+type DS = DashMap<Uuid, Client>;
 
 static CLIENTS: Lazy<DS> = Lazy::new(|| DashMap::new());
-static KV: Lazy<DashMap<Uuid,DashMap<String,String>>> = Lazy::new(|| DashMap::new());
-static ADDRESS_TO_UUID: Lazy<DashMap<String,Uuid>> = Lazy::new(|| DashMap::new());
+static KV: Lazy<DashMap<Uuid, (DashMap<String, String>, DashMap<String, u64>)>> =
+    Lazy::new(|| DashMap::new());
 
+static ADDRESS_TO_UUID: Lazy<DashMap<String, Uuid>> = Lazy::new(|| DashMap::new());
 
-
-pub async fn handle_connection(stream: TcpStream, command_tx: Sender<CommandResponse>)->Result<(),Box<dyn std::error::Error>> {
+pub async fn handle_connection(
+    stream: TcpStream,
+    command_tx: Sender<CommandResponse>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let peer_addr = stream.peer_addr().unwrap().to_string();
     info!("Accepted connection from {}", peer_addr);
-    let client_id = ADDRESS_TO_UUID.get(&peer_addr).map(|id| id.clone()).unwrap_or_else(|| {
-        let id = Uuid::new_v4();
-        ADDRESS_TO_UUID.insert(peer_addr, id);
-        id
-    });
+    let client_id = ADDRESS_TO_UUID
+        .get(&peer_addr)
+        .map(|id| id.clone())
+        .unwrap_or_else(|| {
+            let id = Uuid::new_v4();
+            ADDRESS_TO_UUID.insert(peer_addr, id);
+            id
+        });
 
-    let kv = KV.get(&client_id).map(|kv| {
-        kv.clone()
-    }).unwrap_or_else(|| {
-        let kv = DashMap::new();
+    let kv = KV.get(&client_id).map(|kv| kv.clone()).unwrap_or_else(|| {
+        let kv = (DashMap::new(), DashMap::new());
+        kv.0.insert("_id".to_string(), client_id.to_string());
         KV.insert(client_id, kv.clone());
         kv
     });
-
 
     // Wrap the TCP stream with a RESP codec.
     let framed: Framed<TcpStream, parser::RespCodec> = Framed::new(stream, parser::RespCodec);
 
     let (writer_sink, reader_stream) = framed.split();
-    let client = Client::new(writer_sink, kv);
+    let client = Client::new(writer_sink, kv.0, kv.1);
 
     CLIENTS.insert(client_id, client);
 
@@ -72,7 +72,7 @@ pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     let (command_tx, command_rx) = mpsc::channel::<CommandResponse>(32);
 
-    let mut data_store = DataStore::new(&CLIENTS,command_rx);
+    let mut data_store = DataStore::new(&CLIENTS, command_rx);
 
     let _ = tokio::spawn(async move {
         data_store.run().await.unwrap();
@@ -87,3 +87,4 @@ pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 }
+

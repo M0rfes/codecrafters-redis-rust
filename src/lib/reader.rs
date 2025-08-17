@@ -37,8 +37,8 @@ impl Reader {
     }
 
     async fn process_message(&self, msg: BytesMut) -> Result<(), ReaderError> {
-        let command = Command::try_from(msg)?;
-        match command {
+       match Command::try_from(msg) {
+        Ok(command) =>  match command {
             Command::PING => {
                 debug!("Received PING command");
                 self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::PONG }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
@@ -47,15 +47,25 @@ impl Reader {
                 debug!("Received ECHO command: {}", s);
                 self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::ECHO(s) }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
             }
-            Command::SET(key, value) => {
+            Command::SET(key, value, expiry) => {
                 debug!("Received SET command: {} = {}", key, value);
-                self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::SET(key, value) }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
+                self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::SET(key, value, expiry) }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
             }
             Command::GET(key) => {
                 debug!("Received GET command: {}", key);
                 self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::GET(key) }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
             }
+            Command::DOCS => {
+                debug!("Received DOCS command");
+                self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::OK }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
+            }
+           
         }
+        Err(e) => {
+            debug!("Received ERROR command: {}", e);
+            self.command_tx.send(CommandResponse { client_id: self.client_id, response: Response::ERROR(e.to_string()) }).await.map_err(|e| ReaderError::SendError(e.to_string()))?;
+        }
+       }
         Ok(())
     }
 
