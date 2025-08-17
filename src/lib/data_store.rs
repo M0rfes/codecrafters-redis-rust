@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::BytesMut;
@@ -16,17 +17,15 @@ use crate::parser::RespCodec;
 
 pub struct Client {
     socket: SplitSink<Framed<TcpStream, RespCodec>, BytesMut>,
-    kv: DashMap<String, String>,
-    expiry: DashMap<String, u64>,
+    kv: Arc<(DashMap<String, String>,DashMap<String, u64>)>,
 }
 
 impl Client {
     pub fn new(
         socket: SplitSink<Framed<TcpStream, RespCodec>, BytesMut>,
-        kv: DashMap<String, String>,
-        expiry: DashMap<String, u64>,
+        kv: Arc<(DashMap<String, String>,DashMap<String, u64>)>,
     ) -> Self {
-        Self { socket, kv, expiry }
+        Self { socket, kv }
     }
 }
 pub struct DataStore {
@@ -63,7 +62,7 @@ impl DataStore {
         if let Some(mut client) = self.clients.get_mut(&client_id) {
             match response {
                 Response::GET(key) => {
-                    let mut response = if let Some(value) = client.kv.get(&key) {
+                    let mut response = if let Some(value) = client.kv.0.get(&key) {
                         info!("Value: {:?}", value.value());
                         Response::GET(value.clone())
                     } else {
@@ -72,7 +71,7 @@ impl DataStore {
 
                     let mut expired = false;
                     if let Response::GET(_) = response {
-                        if let Some(expiry) = client.expiry.get(&key) {
+                        if let Some(expiry) = client.kv.1.get(&key) {
                             let now = Utc::now().timestamp_millis();
                             if now > (*expiry as i64) {
                                 expired = true;
@@ -82,8 +81,8 @@ impl DataStore {
                     }
 
                     if expired {
-                        client.kv.remove(&key);
-                        client.expiry.remove(&key);
+                        client.kv.0.remove(&key);
+                        client.kv.1.remove(&key);
                     }
 
                     if let Err(e) = client.socket.send(response.to_bytes()).await {
@@ -94,12 +93,12 @@ impl DataStore {
                 }
 
                 Response::SET(key, value, expiry) => {
-                    client.kv.insert(key.clone(), value.clone());
+                    client.kv.0.insert(key.clone(), value.clone());
                     if let Some(expiry) = expiry {
                         let now = Utc::now().timestamp_millis();
                         let expiry = expiry as i64 + now;
                         info!("Setting expiry for key {} to {}", key, expiry);
-                        client.expiry.insert(key.clone(), expiry as u64);
+                        client.kv.1.insert(key.clone(), expiry as u64);
                     }
                     if let Err(e) = client.socket.send(Response::OK.to_bytes()).await {
                         error!("Failed to send response to client {}", client_id);
@@ -123,15 +122,15 @@ impl DataStore {
     pub async fn run(&mut self) -> Result<(), DataStoreError> {
         info!("DataStore started");
 
-        let mut gc_interval = tokio::time::interval(Duration::from_secs(1));
-        let clients = self.clients;
-        let _ = tokio::spawn(async move {
-            info!("GC started");
-            loop {
-                gc(&clients).await;
-                gc_interval.tick().await;
-            }
-        }); 
+        // let mut gc_interval = tokio::time::interval(Duration::from_secs(1));
+        // let clients = self.clients;
+        // let _ = tokio::spawn(async move {
+        //     info!("GC started");
+        //     loop {
+        //         gc(&clients).await;
+        //         gc_interval.tick().await;
+        //     }
+        // }); 
         
         while let Some(command) = self.command_rx.recv().await {
             let _ = self
@@ -142,27 +141,28 @@ impl DataStore {
     }
 
 }
-async fn gc(clients: &'static Lazy<DashMap<Uuid, Client>>) {
-    for entry in clients.iter() {
-        let keys_to_remove = entry
-            .value()
-            .expiry
-            .iter()
-            .filter_map(|entry| {
-                let now = Utc::now().timestamp_millis();
-                if now > (*entry.value() as i64) {
-                    Some(entry.key().clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+// async fn gc(clients: &'static Lazy<DashMap<Uuid, Client>>) {
+//     for entry in clients.iter() {
+//         let keys_to_remove = entry
+//             .value()
+//             .kv
+//             .1
+//             .iter()
+//             .filter_map(|entry| {
+//                 let now = Utc::now().timestamp_millis();
+//                 if now > (*entry.value() as i64) {
+//                     Some(entry.key().clone())
+//                 } else {
+//                     None
+//                 }
+//             })
+//             .collect::<Vec<_>>();
 
-        info!("Keys to remove: {:?}", keys_to_remove);
+//         info!("Keys to remove: {:?}", keys_to_remove);
 
-        for key in keys_to_remove {
-            entry.value().kv.remove(&key);
-            entry.value().expiry.remove(&key);
-        }
-    }
-}
+//         for key in keys_to_remove {
+//             entry.value().kv.0.remove(&key);
+//             entry.value().kv.1.remove(&key);
+//         }
+//     }
+// }

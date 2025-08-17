@@ -3,8 +3,8 @@ mod data_store;
 pub mod parser;
 mod reader;
 
+use std::sync::Arc;
 use std::time::Duration;
-
 use chrono::Utc;
 use futures::StreamExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -22,7 +22,7 @@ use once_cell::sync::Lazy;
 type DS = DashMap<Uuid, Client>;
 
 static CLIENTS: Lazy<DS> = Lazy::new(|| DashMap::new());
-static KV: Lazy<DashMap<Uuid, (DashMap<String, String>, DashMap<String, u64>)>> =
+static KV: Lazy<DashMap<Uuid, Arc<(DashMap<String, String>, DashMap<String, u64>)>>> =
     Lazy::new(|| DashMap::new());
 
 static ADDRESS_TO_UUID: Lazy<DashMap<String, Uuid>> = Lazy::new(|| DashMap::new());
@@ -43,8 +43,7 @@ pub async fn handle_connection(
         });
 
     let kv = KV.get(&client_id).map(|kv| kv.clone()).unwrap_or_else(|| {
-        let kv = (DashMap::new(), DashMap::new());
-        kv.0.insert("_id".to_string(), client_id.to_string());
+        let kv = Arc::new((DashMap::new(), DashMap::new()));
         KV.insert(client_id, kv.clone());
         kv
     });
@@ -53,7 +52,7 @@ pub async fn handle_connection(
     let framed: Framed<TcpStream, parser::RespCodec> = Framed::new(stream, parser::RespCodec);
 
     let (writer_sink, reader_stream) = framed.split();
-    let client = Client::new(writer_sink, kv.0, kv.1);
+    let client = Client::new(writer_sink, kv);
 
     CLIENTS.insert(client_id, client);
 
@@ -78,6 +77,14 @@ pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         data_store.run().await.unwrap();
     });
 
+    let _ = tokio::spawn(async move {
+        let mut gc_interval = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            gc().await;
+            gc_interval.tick().await;
+        }
+    });
+
     loop {
         let (socket, _) = listener.accept().await?;
         info!("Client count: {}", CLIENTS.len() + 1);
@@ -85,6 +92,26 @@ pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             handle_connection(socket, command_tx_clone).await.unwrap();
         });
+    }
+}
+
+pub async fn gc() {
+    let uuids = ADDRESS_TO_UUID.iter().map(|entry| entry.value().clone()).collect::<Vec<_>>();
+    for uuid in uuids {
+        let Some(entry) = KV.get(&uuid) else {
+            continue;
+        };
+        let kv1 = entry.value().0.clone();
+        let kv2 = entry.value().1.clone();
+        let now = Utc::now().timestamp_millis();
+        let expired = kv2.iter().filter(|entry| now > (*entry.value() as i64)).map(|entry| entry.key().clone()).collect::<Vec<_>>();
+        for key in expired {
+            kv1.remove(&key);
+            kv2.remove(&key);
+        }
+        if kv1.len() > 0 && kv2.len() > 0 {
+            info!("GCed client {} with {} keys and {} values", uuid, kv1.len(), kv2.len());
+        }
     }
 }
 
