@@ -1,35 +1,29 @@
 pub mod command;
-mod data_store;
+mod writer;
 pub mod parser;
 mod reader;
 
-use std::sync::Arc;
 use std::time::Duration;
 use chrono::Utc;
 use futures::StreamExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{self, Sender};
 use tokio_util::codec::Framed;
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::command::CommandResponse;
-use crate::data_store::{Client, DataStore};
 
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 
-type DS = DashMap<Uuid, Client>;
-
-static CLIENTS: Lazy<DS> = Lazy::new(|| DashMap::new());
-static KV: Lazy<DashMap<Uuid, Arc<(DashMap<String, String>, DashMap<String, u64>)>>> =
-    Lazy::new(|| DashMap::new());
+static KV: Lazy<(DashMap<String, String>, DashMap<String, u64>)> =
+    Lazy::new(|| (DashMap::new(), DashMap::new()));
 
 static ADDRESS_TO_UUID: Lazy<DashMap<String, Uuid>> = Lazy::new(|| DashMap::new());
 
 pub async fn handle_connection(
     stream: TcpStream,
-    command_tx: Sender<CommandResponse>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let peer_addr = stream.peer_addr().unwrap().to_string();
     info!("Accepted connection from {}", peer_addr);
@@ -42,19 +36,19 @@ pub async fn handle_connection(
             id
         });
 
-    let kv = KV.get(&client_id).map(|kv| kv.clone()).unwrap_or_else(|| {
-        let kv = Arc::new((DashMap::new(), DashMap::new()));
-        KV.insert(client_id, kv.clone());
-        kv
-    });
-
     // Wrap the TCP stream with a RESP codec.
     let framed: Framed<TcpStream, parser::RespCodec> = Framed::new(stream, parser::RespCodec);
 
     let (writer_sink, reader_stream) = framed.split();
-    let client = Client::new(writer_sink, kv);
+    let (command_tx, command_rx) = mpsc::channel::<CommandResponse>(32);
 
-    CLIENTS.insert(client_id, client);
+    let mut writer = writer::Writer::new(&KV, command_rx, writer_sink);
+    let _ = tokio::spawn(async move {
+      let Ok(_) = writer.run().await else {
+        error!("Failed to start writer");
+        return;
+      };
+    });
 
     info!("Added client {} to data store", client_id);
 
@@ -69,14 +63,6 @@ pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(&addr).await?;
     info!("Server listening on {}", addr);
 
-    let (command_tx, command_rx) = mpsc::channel::<CommandResponse>(32);
-
-    let mut data_store = DataStore::new(&CLIENTS, command_rx);
-
-    let _ = tokio::spawn(async move {
-        data_store.run().await.unwrap();
-    });
-
     let _ = tokio::spawn(async move {
         let mut gc_interval = tokio::time::interval(Duration::from_secs(1));
         loop {
@@ -87,10 +73,8 @@ pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         let (socket, _) = listener.accept().await?;
-        info!("Client count: {}", CLIENTS.len() + 1);
-        let command_tx_clone = command_tx.clone();
         tokio::spawn(async move {
-            handle_connection(socket, command_tx_clone).await.unwrap();
+            handle_connection(socket).await.unwrap();
         });
     }
 }
@@ -98,11 +82,8 @@ pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 pub async fn gc() {
     let uuids = ADDRESS_TO_UUID.iter().map(|entry| entry.value().clone()).collect::<Vec<_>>();
     for uuid in uuids {
-        let Some(entry) = KV.get(&uuid) else {
-            continue;
-        };
-        let kv1 = entry.value().0.clone();
-        let kv2 = entry.value().1.clone();
+        let kv1 = KV.0.clone();
+        let kv2 = KV.1.clone();
         let now = Utc::now().timestamp_millis();
         let expired = kv2.iter().filter(|entry| now > (*entry.value() as i64)).map(|entry| entry.key().clone()).collect::<Vec<_>>();
         for key in expired {

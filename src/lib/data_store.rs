@@ -1,8 +1,7 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use bytes::BytesMut;
-use chrono::{TimeDelta, Utc};
+use chrono::Utc;
 use dashmap::DashMap;
 use futures::{stream::SplitSink, SinkExt};
 use once_cell::sync::Lazy;
@@ -120,18 +119,7 @@ impl DataStore {
     }
 
     pub async fn run(&mut self) -> Result<(), DataStoreError> {
-        info!("DataStore started");
-
-        // let mut gc_interval = tokio::time::interval(Duration::from_secs(1));
-        // let clients = self.clients;
-        // let _ = tokio::spawn(async move {
-        //     info!("GC started");
-        //     loop {
-        //         gc(&clients).await;
-        //         gc_interval.tick().await;
-        //     }
-        // }); 
-        
+        info!("DataStore started");        
         while let Some(command) = self.command_rx.recv().await {
             let _ = self
                 .send_response(command.client_id, command.response)
@@ -141,28 +129,4 @@ impl DataStore {
     }
 
 }
-// async fn gc(clients: &'static Lazy<DashMap<Uuid, Client>>) {
-//     for entry in clients.iter() {
-//         let keys_to_remove = entry
-//             .value()
-//             .kv
-//             .1
-//             .iter()
-//             .filter_map(|entry| {
-//                 let now = Utc::now().timestamp_millis();
-//                 if now > (*entry.value() as i64) {
-//                     Some(entry.key().clone())
-//                 } else {
-//                     None
-//                 }
-//             })
-//             .collect::<Vec<_>>();
 
-//         info!("Keys to remove: {:?}", keys_to_remove);
-
-//         for key in keys_to_remove {
-//             entry.value().kv.0.remove(&key);
-//             entry.value().kv.1.remove(&key);
-//         }
-//     }
-// }
