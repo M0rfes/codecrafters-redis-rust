@@ -1,14 +1,14 @@
+use std::sync::Arc;
+
 use bytes::{Buf, BytesMut};
-use chrono::TimeDelta;
 use thiserror::Error;
 use tracing::info;
-use uuid::Uuid;
 
 pub enum Command {
     PING,
-    ECHO(String),
-    SET(String, String,Option<u64>),
-    GET(String),
+    ECHO(Arc<str>),
+    SET(Arc<str>, Arc<str>,Option<u64>),
+    GET(Arc<str>),
     DOCS,
 
 }
@@ -49,28 +49,38 @@ impl<'a> CommandParser<'a> {
             return Err(ReaderError::ReadError);
         }
 
-        let commands = self.parse().map_err(|_| ReaderError::ReadError)?;
+        let mut commands = self.parse().map_err(|_| ReaderError::ReadError)?;
         info!("Commands: {:?}", commands);
-        match commands[0].as_str() {
+        match commands[0].as_ref() {
             "PING" | "ping" => Ok(Command::PING),
-            "ECHO" | "echo" => Ok(Command::ECHO(commands[1].clone())),
+            "ECHO" | "echo" => {
+                let echo = commands.remove(1);
+                Ok(Command::ECHO(echo.into()))
+            },
             "SET" | "set" => {
-                if commands.len() == 5 && (commands[3] == "PX" || commands[3] == "px") {
-                    let expiry:u64 = commands[4].parse().map_err(|_| ReaderError::InvalidExpiry(commands[4].clone()))?;
-                    Ok(Command::SET(commands[1].clone(), commands[2].clone(), Some(expiry)))
+                if commands.len() == 5 && (commands[3].as_ref() == "PX" || commands[3].as_ref() == "px") {
+                    let key = commands.remove(1);
+                    let value = commands.remove(1);
+                    let ttl = commands.remove(2);
+                    Ok(Command::SET(key.into(), value.into(), Some(ttl.parse().map_err(|_| ReaderError::InvalidExpiry(ttl.to_string()))?)))
                 } else {
-                    Ok(Command::SET(commands[1].clone(), commands[2].clone(), None))
+                    let key = commands.remove(1);
+                    let value = commands.remove(1);
+                    Ok(Command::SET(key.into(), value.into(), None))
                 }
             },
-            "GET" | "get" => Ok(Command::GET(commands[1].clone())),
-            "DOCS" | "docs" => Ok(Command::DOCS),
-            _ => Err(ReaderError::InvalidCommand(commands[0].clone())),
+            "GET" | "get" => {
+                let key = commands.remove(1);
+                Ok(Command::GET(key.into()))
+            },
+            "COMMAND" | "command" => Ok(Command::DOCS),
+            _ => Err(ReaderError::InvalidCommand(commands.join(" "))),
         }
     }
 
     // "*1\r\n$4\r\nPING\r\n"
     // *2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n.
-    fn parse(&mut self) -> Result<Vec<String>, std::io::Error> {
+    fn parse(&mut self) -> Result<Vec<Box<str>>, std::io::Error> {
         let byte = self.cursor.get_u8();
         if byte == b'*' {
             return self.parse_array();
@@ -91,7 +101,7 @@ impl<'a> CommandParser<'a> {
         }
     }
 
-    fn parse_array(&mut self) -> Result<Vec<String>, std::io::Error> {
+    fn parse_array(&mut self) -> Result<Vec<Box<str>>, std::io::Error> {
         let count = self.get_string()?;
         let count: i64 = count.parse().map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid array count")
@@ -109,7 +119,7 @@ impl<'a> CommandParser<'a> {
         Ok(result)
     }
 
-    fn parse_bulk_string(&mut self) -> Result<String, std::io::Error> {
+    fn parse_bulk_string(&mut self) -> Result<Box<str>, std::io::Error> {
         let length = self.get_string()?;
         let length: i64 = length.parse().map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid bulk string length")
@@ -124,28 +134,28 @@ impl<'a> CommandParser<'a> {
             result.push(byte as char);
         }
         self.cursor.advance( 2); // consume the \r\n
-        Ok(result)
+        Ok(result.into())
     }
 
-    fn parse_simple_string(&mut self) -> Result<String, std::io::Error> {
+    fn parse_simple_string(&mut self) -> Result<Box<str>, std::io::Error> {
         self.get_string()
     }
 
-    fn parse_error(&mut self) -> Result<String, std::io::Error> {
+    fn parse_error(&mut self) -> Result<Box<str>, std::io::Error> {
         self.get_string()
     }
 
-    fn parse_integer(&mut self) -> Result<String, std::io::Error> {
+    fn parse_integer(&mut self) -> Result<Box<str>, std::io::Error> {
         self.get_string()
     }
 
-    fn get_string(&mut self) -> Result<String, std::io::Error> {
+    fn get_string(&mut self) -> Result<Box<str>, std::io::Error> {
         let mut result = String::new();
         while self.cursor.remaining() > 0 {
             let first_byte = self.cursor.get_u8();
             let second_byte = self.cursor.get_u8();
             if first_byte == b'\r' && second_byte == b'\n' {
-                return Ok(result);
+                return Ok(result.into());
             } else {
                 result.push(first_byte as char);
                 if second_byte == b'\r' {
@@ -162,16 +172,16 @@ impl<'a> CommandParser<'a> {
 
 pub enum Response {
     PONG,
-    ECHO(String),
+    ECHO(Arc<str>),
     OK,
-    GET(String),
-    SET(String, String,Option<u64>),
-    ERROR(String),
+    GET(Arc<str>),
+    SET(Arc<str>, Arc<str>,Option<u64>),
+    ERROR(Arc<str>),
     NULL,
 }
 
 impl Response {
-    pub fn to_bytes(&self) -> BytesMut {
+    pub fn to_bytes(self) -> BytesMut {
         match self {
             Response::PONG => BytesMut::from("+PONG\r\n"),
             Response::ECHO(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
@@ -183,7 +193,3 @@ impl Response {
     }
 }
 
-pub struct CommandResponse {
-    pub client_id: Uuid,
-    pub response: Response,
-}

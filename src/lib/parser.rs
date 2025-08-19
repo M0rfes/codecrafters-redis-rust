@@ -130,13 +130,13 @@ impl RespCodec {
     }
 
 
-    fn get_string(&self,cursor: &mut std::io::Cursor<&[u8]>) -> Result<String, std::io::Error> {
+    fn get_string(&self,cursor: &mut std::io::Cursor<&[u8]>) -> Result<Box<str>, std::io::Error> {
         let mut result = String::new();
         while cursor.remaining() > 0 {
             let first_byte = cursor.get_u8();
             let second_byte = cursor.get_u8();
             if first_byte == b'\r' && second_byte == b'\n' {
-                return Ok(result);
+                return Ok(result.into());
             } else {
                 result.push(first_byte as char);
                 if second_byte == b'\r' {
