@@ -9,6 +9,7 @@ pub enum Command {
     ECHO(Arc<str>),
     SET(Arc<str>, Arc<str>,Option<u64>),
     GET(Arc<str>),
+    RPUSH(Arc<str>, Arc<str>),
     DOCS,
 
 }
@@ -52,12 +53,12 @@ impl<'a> CommandParser<'a> {
         let mut commands = self.parse().map_err(|_| ReaderError::ReadError)?;
         info!("Commands: {:?}", commands);
         match commands[0].as_ref() {
-            "PING" | "ping" => Ok(Command::PING),
-            "ECHO" | "echo" => {
+            "ping"  => Ok(Command::PING),
+            "echo"  => {
                 let echo = commands.remove(1);
                 Ok(Command::ECHO(echo.into()))
             },
-            "SET" | "set" => {
+            "set"  => {
                 if commands.len() == 5 && (commands[3].as_ref() == "PX" || commands[3].as_ref() == "px") {
                     let key = commands.remove(1);
                     let value = commands.remove(1);
@@ -69,11 +70,16 @@ impl<'a> CommandParser<'a> {
                     Ok(Command::SET(key.into(), value.into(), None))
                 }
             },
-            "GET" | "get" => {
+            "get" => {
                 let key = commands.remove(1);
                 Ok(Command::GET(key.into()))
             },
-            "COMMAND" | "command" => Ok(Command::DOCS),
+            "rpush" => {
+                let key = commands.remove(1);
+                let value = commands.remove(1);
+                Ok(Command::RPUSH(key.into(), value.into()))
+            },
+            "command"  => Ok(Command::DOCS),
             _ => Err(ReaderError::InvalidCommand(commands.join(" "))),
         }
     }
@@ -134,7 +140,7 @@ impl<'a> CommandParser<'a> {
             result.push(byte as char);
         }
         self.cursor.advance( 2); // consume the \r\n
-        Ok(result.into())
+        Ok(result.to_lowercase().into())
     }
 
     fn parse_simple_string(&mut self) -> Result<Box<str>, std::io::Error> {
@@ -155,7 +161,7 @@ impl<'a> CommandParser<'a> {
             let first_byte = self.cursor.get_u8();
             let second_byte = self.cursor.get_u8();
             if first_byte == b'\r' && second_byte == b'\n' {
-                return Ok(result.into());
+                return Ok(result.to_lowercase().into());
             } else {
                 result.push(first_byte as char);
                 if second_byte == b'\r' {
@@ -175,7 +181,7 @@ pub enum Response {
     ECHO(Arc<str>),
     OK,
     GET(Arc<str>),
-    SET(Arc<str>, Arc<str>,Option<u64>),
+    LEN(usize),
     ERROR(Arc<str>),
     NULL,
 }
@@ -185,10 +191,11 @@ impl Response {
         match self {
             Response::PONG => BytesMut::from("+PONG\r\n"),
             Response::ECHO(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
-            Response::OK | Response::SET(_, _,_) => BytesMut::from("+OK\r\n"),
+            Response::OK  => BytesMut::from("+OK\r\n"),
             Response::GET(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
             Response::ERROR(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
             Response::NULL => BytesMut::from("$-1\r\n"),
+            Response::LEN(len) => BytesMut::from(format!(":{}\r\n", len).as_str()),
         }
     }
 }

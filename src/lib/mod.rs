@@ -1,8 +1,8 @@
 pub mod command;
 pub mod parser;
+pub mod kv_manager;
 mod writer;
 
-use chrono::Utc;
 use futures::{SinkExt, StreamExt};
 use std::{sync::Arc, time::Duration};
 use tokio::net::{TcpListener, TcpStream};
@@ -10,11 +10,13 @@ use tokio_util::codec::Framed;
 use tracing::{error, info};
 
 
-use dashmap::DashMap;
+
+use crate::kv_manager::KvManager;
 
 
 
-pub async fn handle_connection(stream: TcpStream, kv: Arc<(DashMap<Arc<str>, Arc<str>>, DashMap<Arc<str>, u64>)>) -> Result<(), Box<dyn std::error::Error>> {
+
+pub async fn handle_connection(stream: TcpStream, kv: Arc<KvManager>) -> Result<(), Box<dyn std::error::Error>> {
     let peer_addr = stream.peer_addr().unwrap().to_string();
     info!("Accepted connection from {}", peer_addr);
 
@@ -40,7 +42,7 @@ pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("0.0.0.0:{}", port);
     let listener = TcpListener::bind(&addr).await?;
     info!("Server listening on {}", addr);
-    let kv = Arc::new((DashMap::new(), DashMap::new()));
+    let kv = Arc::new(KvManager::new());
 
     let kv_ref = kv.clone();
     let _ = tokio::spawn(async move {
@@ -60,17 +62,6 @@ pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-pub async fn gc(kv: Arc<(DashMap<Arc<str>, Arc<str>>, DashMap<Arc<str>, u64>)>) {
-    let kv1 = kv.0.clone();
-    let kv2 = kv.1.clone();
-    let now = Utc::now().timestamp_millis();
-    let expired = kv2
-        .iter()
-        .filter(|entry| now > (*entry.value() as i64))
-        .map(|entry| entry.key().clone())
-        .collect::<Vec<_>>();
-    for key in expired {
-        kv1.remove(&key);
-        kv2.remove(&key);
-    }
+pub async fn gc(kv: Arc<KvManager>) {
+    kv.evect_expired().await;
 }
