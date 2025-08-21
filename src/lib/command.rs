@@ -9,7 +9,7 @@ pub enum Command {
     ECHO(Arc<str>),
     SET(Arc<str>, Arc<str>,Option<u64>),
     GET(Arc<str>),
-    RPUSH(Arc<str>, Arc<str>),
+    RPUSH(Arc<str>, Vec<Box<str>>),
     DOCS,
 
 }
@@ -52,35 +52,39 @@ impl<'a> CommandParser<'a> {
 
         let mut commands = self.parse().map_err(|_| ReaderError::ReadError)?;
         info!("Commands: {:?}", commands);
-        match commands[0].as_ref() {
+        match commands.remove(0).as_ref() {
             "ping"  => Ok(Command::PING),
             "echo"  => {
-                let echo = commands.remove(1);
+                let echo = commands.remove(0);
                 Ok(Command::ECHO(echo.into()))
             },
             "set"  => {
-                if commands.len() == 5 && (commands[3].as_ref() == "PX" || commands[3].as_ref() == "px") {
-                    let key = commands.remove(1);
-                    let value = commands.remove(1);
-                    let ttl = commands.remove(2);
+                if commands.len() == 4 && (commands[2].as_ref() == "px") {
+                    info!("SET with TTL: {:?}", commands);
+                    let key = commands.remove(0);
+                    let value = commands.remove(0);
+                    let ttl = commands.remove(1);
+                    info!("SET with TTL: {:?}, {:?}, {:?}", key, value, ttl);
                     Ok(Command::SET(key.into(), value.into(), Some(ttl.parse().map_err(|_| ReaderError::InvalidExpiry(ttl.to_string()))?)))
                 } else {
-                    let key = commands.remove(1);
-                    let value = commands.remove(1);
+                    let key = commands.remove(0);
+                    let value = commands.remove(0);
                     Ok(Command::SET(key.into(), value.into(), None))
                 }
             },
             "get" => {
-                let key = commands.remove(1);
+                let key = commands.remove(0);
                 Ok(Command::GET(key.into()))
             },
             "rpush" => {
-                let key = commands.remove(1);
-                let value = commands.remove(1);
-                Ok(Command::RPUSH(key.into(), value.into()))
+                let key = commands.remove(0);
+                let value = commands;
+                Ok(Command::RPUSH(key.into(), value))
             },
             "command"  => Ok(Command::DOCS),
-            _ => Err(ReaderError::InvalidCommand(commands.join(" "))),
+            command => {
+                info!("Invalid command: {:?}", command);
+                Err(ReaderError::InvalidCommand(commands.join(" ")))},
         }
     }
 
