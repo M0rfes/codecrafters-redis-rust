@@ -41,7 +41,6 @@ impl Writer {
             Command::ECHO(s) => Response::ECHO(s),
             Command::LRANGE(key, start, stop) => {
                 let list = self.kv.lrange(&key, start, stop).await;
-                info!("LRANGE: {:?}", list);
                 Response::LIST(list)
             }
             _ => Response::OK,

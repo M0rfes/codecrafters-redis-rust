@@ -4,6 +4,7 @@ use chrono::Utc;
 use dashmap::DashMap;
 use thiserror::Error;
 use tokio::sync::RwLock;
+use tracing::info;
 
 #[derive(Error, Debug)]
 pub enum KvManagerError {
@@ -95,7 +96,26 @@ impl KvManager {
             return vec![];
         };
         let list = list.read().await;
-        list.iter().skip(start as usize).take((stop - start + 1) as usize).map(|v| v.clone()).collect()
+
+        let mut start_index = if start < 0 {
+            (list.len() as i64) + start
+        } else {
+            start as i64
+        };
+        if start_index < 0 {
+            start_index = 0;
+        }
+        let mut stop_index = if stop < 0 {
+            (list.len() as i64) + stop
+        } else {
+            stop as i64
+        };
+        if stop_index < 0 {
+            stop_index = 0;
+        }
+        info!("start_index: {}, stop_index: {}", start_index, stop_index);
+      
+        list.iter().skip(start_index as usize).take((stop_index - start_index + 1) as usize).map(|v| v.clone()).collect()
     }
 
 }
