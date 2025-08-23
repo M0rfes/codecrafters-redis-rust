@@ -13,6 +13,7 @@ pub enum Command {
     LRANGE(Arc<str>, i64, i64),
     LPUSH(Arc<str>, Vec<Arc<str>>),
     LLEN(Arc<str>),
+    LPOP(Arc<str>),
     DOCS,
 
 }
@@ -96,6 +97,10 @@ impl<'a> CommandParser<'a> {
             "llen" => {
                 let key = commands.remove(0);
                 Ok(Command::LLEN(key.into()))
+            },
+            "lpop" => {
+                let key = commands.remove(0);
+                Ok(Command::LPOP(key.into()))
             },
             "command"  => Ok(Command::DOCS),
             command => {

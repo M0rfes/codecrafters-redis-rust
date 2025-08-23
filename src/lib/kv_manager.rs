@@ -139,4 +139,12 @@ impl KvManager {
         let list = list.read().await;
         list.len()
     }
+
+    pub async fn lpop(&self, key: &str) -> Option<Arc<str>> {
+        let Some(list) = self.lists.get_mut(key) else {
+            return None;
+        };
+        let mut list = list.write().await;
+        Some(list.remove(0))
+    }
 }

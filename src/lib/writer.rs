@@ -51,6 +51,14 @@ impl Writer {
                 let len = self.kv.llen(&key).await;
                 Response::LEN(len)
             }
+            Command::LPOP(key) => {
+                let value = self.kv.lpop(&key).await;
+                if let Some(value) = value {
+                    Response::GET(value)
+                } else {
+                    Response::NULL
+                }
+            }
             _ => Response::OK,
         }
     }
