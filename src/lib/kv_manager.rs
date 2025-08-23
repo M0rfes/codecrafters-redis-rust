@@ -131,4 +131,12 @@ impl KvManager {
         }
         list.len()
     }
+
+    pub async fn llen(&self, key: &str) -> usize {
+        let Some(list) = self.lists.get(key) else {
+            return 0;
+        };
+        let list = list.read().await;
+        list.len()
+    }
 }

@@ -47,6 +47,10 @@ impl Writer {
                 let len = self.kv.lpush(&key, value).await;
                 Response::LEN(len)
             }
+            Command::LLEN(key) => {
+                let len = self.kv.llen(&key).await;
+                Response::LEN(len)
+            }
             _ => Response::OK,
         }
     }
