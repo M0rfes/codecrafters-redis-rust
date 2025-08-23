@@ -31,7 +31,7 @@ pub async fn handle_connection(stream: TcpStream, kv: Arc<KvManager>) -> Result<
             continue;
         };
         let response = writer.process(command).await;
-        info!("Received command:");
+        info!("Received response: {:?}", response);
         skink.send(response.to_bytes()).await?;
     }
 

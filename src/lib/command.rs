@@ -9,7 +9,8 @@ pub enum Command {
     ECHO(Arc<str>),
     SET(Arc<str>, Arc<str>,Option<u64>),
     GET(Arc<str>),
-    RPUSH(Arc<str>, Vec<Box<str>>),
+    RPUSH(Arc<str>, Vec<Arc<str>>),
+    LRANGE(Arc<str>, i64, i64),
     DOCS,
 
 }
@@ -60,11 +61,9 @@ impl<'a> CommandParser<'a> {
             },
             "set"  => {
                 if commands.len() == 4 && (commands[2].as_ref() == "px") {
-                    info!("SET with TTL: {:?}", commands);
                     let key = commands.remove(0);
                     let value = commands.remove(0);
                     let ttl = commands.remove(1);
-                    info!("SET with TTL: {:?}, {:?}, {:?}", key, value, ttl);
                     Ok(Command::SET(key.into(), value.into(), Some(ttl.parse().map_err(|_| ReaderError::InvalidExpiry(ttl.to_string()))?)))
                 } else {
                     let key = commands.remove(0);
@@ -79,7 +78,13 @@ impl<'a> CommandParser<'a> {
             "rpush" => {
                 let key = commands.remove(0);
                 let value = commands;
-                Ok(Command::RPUSH(key.into(), value))
+                Ok(Command::RPUSH(key.into(), value.into()))
+            },
+            "lrange" => {
+                let key = commands.remove(0);
+                let start = commands.remove(0);
+                let stop = commands.remove(0);
+                Ok(Command::LRANGE(key.into(), start.parse().map_err(|_| ReaderError::InvalidExpiry(start.to_string()))?, stop.parse().map_err(|_| ReaderError::InvalidExpiry(stop.to_string()))?))
             },
             "command"  => Ok(Command::DOCS),
             command => {
@@ -90,7 +95,7 @@ impl<'a> CommandParser<'a> {
 
     // "*1\r\n$4\r\nPING\r\n"
     // *2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n.
-    fn parse(&mut self) -> Result<Vec<Box<str>>, std::io::Error> {
+    fn parse(&mut self) -> Result<Vec<Arc<str>>, std::io::Error> {
         let byte = self.cursor.get_u8();
         if byte == b'*' {
             return self.parse_array();
@@ -111,7 +116,7 @@ impl<'a> CommandParser<'a> {
         }
     }
 
-    fn parse_array(&mut self) -> Result<Vec<Box<str>>, std::io::Error> {
+    fn parse_array(&mut self) -> Result<Vec<Arc<str>>, std::io::Error> {
         let count = self.get_string()?;
         let count: i64 = count.parse().map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid array count")
@@ -129,7 +134,7 @@ impl<'a> CommandParser<'a> {
         Ok(result)
     }
 
-    fn parse_bulk_string(&mut self) -> Result<Box<str>, std::io::Error> {
+    fn parse_bulk_string(&mut self) -> Result<Arc<str>, std::io::Error> {
         let length = self.get_string()?;
         let length: i64 = length.parse().map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid bulk string length")
@@ -147,19 +152,19 @@ impl<'a> CommandParser<'a> {
         Ok(result.to_lowercase().into())
     }
 
-    fn parse_simple_string(&mut self) -> Result<Box<str>, std::io::Error> {
+    fn parse_simple_string(&mut self) -> Result<Arc<str>, std::io::Error> {
         self.get_string()
     }
 
-    fn parse_error(&mut self) -> Result<Box<str>, std::io::Error> {
+    fn parse_error(&mut self) -> Result<Arc<str>, std::io::Error> {
         self.get_string()
     }
 
-    fn parse_integer(&mut self) -> Result<Box<str>, std::io::Error> {
+    fn parse_integer(&mut self) -> Result<Arc<str>, std::io::Error> {
         self.get_string()
     }
 
-    fn get_string(&mut self) -> Result<Box<str>, std::io::Error> {
+    fn get_string(&mut self) -> Result<Arc<str>, std::io::Error> {
         let mut result = String::new();
         while self.cursor.remaining() > 0 {
             let first_byte = self.cursor.get_u8();
@@ -180,12 +185,14 @@ impl<'a> CommandParser<'a> {
 }
 
 
+#[derive(Debug)]
 pub enum Response {
     PONG,
     ECHO(Arc<str>),
     OK,
     GET(Arc<str>),
     LEN(usize),
+    LIST(Vec<Arc<str>>),
     ERROR(Arc<str>),
     NULL,
 }
@@ -200,6 +207,13 @@ impl Response {
             Response::ERROR(s) => BytesMut::from(format!("${}\r\n{}\r\n", s.len(), s).as_str()),
             Response::NULL => BytesMut::from("$-1\r\n"),
             Response::LEN(len) => BytesMut::from(format!(":{}\r\n", len).as_str()),
+            Response::LIST(list) => {
+                let mut str = format!("*{}\r\n", list.len());
+                for item in list {
+                    str.push_str(format!("${}\r\n{}\r\n", item.len(), item).as_str());
+                }
+                BytesMut::from(str.as_str())
+            }
         }
     }
 }

@@ -16,7 +16,7 @@ pub struct KvManager {
     // kv for str str
     strings: DashMap<Arc<str>, Arc<str>>,
     // list for str list
-    lists: DashMap<Arc<str>, Arc<RwLock<Vec<Box<str>>>>>,
+    lists: DashMap<Arc<str>, Arc<RwLock<Vec<Arc<str>>>>>,
     // expiry for str expiry
     expires: DashMap<Arc<str>, u64>,
 }
@@ -59,7 +59,7 @@ impl KvManager {
         self.expires.get(key).map(|v| v.value().clone())
     }
 
-    pub async fn rpush(&self, key: &str, values: Vec<Box<str>>) -> usize {
+    pub async fn rpush(&self, key: &str, values: Vec<Arc<str>>) -> usize {
         let Some(list) = self.lists.get_mut(key) else {
 
             let len = values.len();
@@ -90,5 +90,12 @@ impl KvManager {
         }
     }
 
+    pub async fn lrange(&self, key: &str, start: i64, stop: i64) -> Vec<Arc<str>> {
+        let Some(list) = self.lists.get(key) else {
+            return vec![];
+        };
+        let list = list.read().await;
+        list.iter().skip(start as usize).take((stop - start + 1) as usize).map(|v| v.clone()).collect()
+    }
 
 }
