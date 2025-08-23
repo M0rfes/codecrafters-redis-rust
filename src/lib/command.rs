@@ -11,6 +11,7 @@ pub enum Command {
     GET(Arc<str>),
     RPUSH(Arc<str>, Vec<Arc<str>>),
     LRANGE(Arc<str>, i64, i64),
+    LPUSH(Arc<str>, Vec<Arc<str>>),
     DOCS,
 
 }
@@ -85,6 +86,11 @@ impl<'a> CommandParser<'a> {
                 let start = commands.remove(0);
                 let stop = commands.remove(0);
                 Ok(Command::LRANGE(key.into(), start.parse().map_err(|_| ReaderError::InvalidExpiry(start.to_string()))?, stop.parse().map_err(|_| ReaderError::InvalidExpiry(stop.to_string()))?))
+            },
+            "lpush" => {
+                let key = commands.remove(0);
+                let value = commands;
+                Ok(Command::LPUSH(key.into(), value.into()))
             },
             "command"  => Ok(Command::DOCS),
             command => {

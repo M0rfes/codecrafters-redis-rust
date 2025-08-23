@@ -43,6 +43,10 @@ impl Writer {
                 let list = self.kv.lrange(&key, start, stop).await;
                 Response::LIST(list)
             }
+            Command::LPUSH(key, value) => {
+                let len = self.kv.lpush(&key, value).await;
+                Response::LEN(len)
+            }
             _ => Response::OK,
         }
     }

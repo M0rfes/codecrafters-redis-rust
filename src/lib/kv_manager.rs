@@ -118,4 +118,17 @@ impl KvManager {
         list.iter().skip(start_index as usize).take((stop_index - start_index + 1) as usize).map(|v| v.clone()).collect()
     }
 
+    pub async fn lpush(&self, key: &str, values: Vec<Arc<str>>) -> usize {
+        let Some(list) = self.lists.get_mut(key) else {
+            let len = values.len();
+            let list = Arc::new(RwLock::new(values));
+            self.lists.insert(key.into(), list);
+            return len;
+        };
+        let mut list = list.write().await;
+        for value in values {
+            list.insert(0, value);
+        }
+        list.len()
+    }
 }
