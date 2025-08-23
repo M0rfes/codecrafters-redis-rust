@@ -14,6 +14,7 @@ pub enum Command {
     LPUSH(Arc<str>, Vec<Arc<str>>),
     LLEN(Arc<str>),
     LPOP(Arc<str>),
+    LPOP_WITH_COUNT(Arc<str>, u64),
     DOCS,
 
 }
@@ -34,6 +35,9 @@ pub enum ReaderError {
 
     #[error("Invalid command")]
     InvalidCommand(String),
+
+    #[error("Invalid count")]
+    InvalidCount(String),
 }
 
 impl TryFrom<BytesMut> for Command {
@@ -100,7 +104,12 @@ impl<'a> CommandParser<'a> {
             },
             "lpop" => {
                 let key = commands.remove(0);
-                Ok(Command::LPOP(key.into()))
+                if commands.len() == 1 {
+                    let count = commands.remove(0);
+                    Ok(Command::LPOP_WITH_COUNT(key.into(), count.parse().map_err(|_| ReaderError::InvalidCount(count.to_string()))?))
+                } else {
+                    Ok(Command::LPOP(key.into()))
+                }
             },
             "command"  => Ok(Command::DOCS),
             command => {

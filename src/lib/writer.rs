@@ -59,6 +59,14 @@ impl Writer {
                     Response::NULL
                 }
             }
+            Command::LPOP_WITH_COUNT(key, count) => {
+                let values = self.kv.lpop_with_count(&key, count).await;
+                if let Some(values) = values {
+                    Response::LIST(values)
+                } else {
+                    Response::NULL
+                }
+            }
             _ => Response::OK,
         }
     }

@@ -145,6 +145,25 @@ impl KvManager {
             return None;
         };
         let mut list = list.write().await;
+        if list.is_empty() {
+            return None;
+        }
         Some(list.remove(0))
+    }
+
+    pub async fn lpop_with_count(&self, key: &str, count: u64) -> Option<Vec<Arc<str>>> {
+        let Some(list) = self.lists.get_mut(key) else {
+            return None;
+        };
+        let mut list = list.write().await;
+        if list.is_empty() {
+            return None;
+        }
+        let values = if count > list.len() as u64 {
+            list.drain(..).collect()
+        } else {
+            list.drain(..count as usize).collect()
+        };
+        Some(values)
     }
 }
